@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>Dual Transcript Interface (Press Space to Replay)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+        .container { display: flex; height: 100vh; }
+        .pane { flex: 1; padding: 15px; border-left: 2px solid #ddd; overflow-y: auto; }
+        .pane:first-child { border-left: none; }
+        #player { margin-bottom: 15px; }
+        #transcript { max-width: 100%; margin: 0 auto; }
+        .line { padding: 8px; border-bottom: 1px solid #ccc; cursor: pointer; position: relative; outline: none; }
+        .line:hover { background-color: #eef; }
+        /* Add a visual indicator when a line is selected */
+        .line:focus { box-shadow: 0 0 0 2px #2196f3; }
+        .user { font-weight: bold; }
+        .machine { color: gray; margin-left: 10px; }
+        .line[contenteditable="true"] { background-color: #ffffcc; outline: 1px dashed #999; }
+        .highlight { background-color: #d1ecf1 !important; }
+        .record-btn {
+            position: absolute; right: 10px; top: 8px; background: #2196f3; color: white;
+            border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
+        }
+        .result { margin-top: 5px; font-size: 13px; }
+        #toolbar {
+            display: none; position: absolute; background: #fff; border: 1px solid #ccc;
+            padding: 5px; z-index: 1000;
+        }
+        #globalTogglePause {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            padding: 10px 20px;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        h3 { border-bottom: 1px solid #aaa; padding-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="toolbar">
+    <button onclick="execCmd('bold')"><b>B</b></button>
+    <button onclick="execCmd('italic')"><i>I</i></button>
+    <button onclick="execCmd('underline')"><u>U</u></button>
+    <input onchange="execCmd('foreColor', this.value)" type="color"/>
+</div>
+
+<div class="container">
+    <div class="pane" id="pane1">
+        <h2>Pane 1</h2>
+        <div style="margin: 20px auto; max-width: 100%;">
+            <label>🔗 YouTube Video ID: <input class="videoIdInput" style="width: 300px;" type="text" value=""/></label><br/><br/>
+            <label>📝 English Transcript: <textarea class="scriptEN" rows="6" style="width: 100%;"></textarea></label><br/><br/>
+            <label>🇻🇳 Vietnamese Transcript: <textarea class="scriptVI" rows="6" style="width: 100%;"></textarea></label><br/><br/>
+            <br/>
+            <button class="loadBtn">▶️ Load Video + Transcript</button><br/>
+            <button class="saveBtn">💾 Save Script</button>
+            <br/><br/>
+            <label>📂 Load Saved Script (.json):
+              <input type="file" class="loadFileInput" accept=".json">
+            </label>
+        </div>
+        <div class="player-container"></div>
+        <h3>Transcript (EN + VI)</h3>
+        <div class="transcript"></div>
+    </div>
+
+    <div class="pane" id="pane2">
+        <h2>Pane 2</h2>
+        <div style="margin: 20px auto; max-width: 100%;">
+            <label>🔗 YouTube Video ID: <input class="videoIdInput" style="width: 300px;" type="text" value=""/></label><br/><br/>
+            <label>📝 English Transcript: <textarea class="scriptEN" rows="6" style="width: 100%;"></textarea></label><br/><br/>
+            <label>🇻🇳 Vietnamese Transcript: <textarea class="scriptVI" rows="6" style="width: 100%;"></textarea></label><br/><br/>
+            <br/>
+            <button class="loadBtn">▶️ Load Video + Transcript</button><br/>
+            <button class="saveBtn">💾 Save Script</button>
+            <br/><br/>
+            <label>📂 Load Saved Script (.json):
+              <input type="file" class="loadFileInput" accept=".json">
+            </label>
+        </div>
+        <div class="player-container"></div>
+        <h3>Transcript (EN + VI)</h3>
+        <div class="transcript"></div>
+    </div>
+</div>
+
+<button id="globalTogglePause">Play All</button>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+class TranscriptApp {
+    constructor(paneId) {
+        this.pane = document.getElementById(paneId);
+        if (!this.pane) return;
+        
+        this.player = null;
+        this.transcriptData = [];
+        this.userScrolling = false;
+        this.scrollTimeout = null;
+
+        this.videoIdInput = this.pane.querySelector('.videoIdInput');
+        this.scriptEN = this.pane.querySelector('.scriptEN');
+        this.scriptVI = this.pane.querySelector('.scriptVI');
+        this.transcriptDiv = this.pane.querySelector('.transcript');
+        this.playerContainer = this.pane.querySelector('.player-container');
+
+        this.pane.querySelector('.loadBtn').onclick = () => this.loadVideoAndTranscript();
+        this.pane.querySelector('.saveBtn').onclick = () => this.saveScripts();
+        this.pane.querySelector('.loadFileInput').onchange = (event) => this.loadScriptFile(event);
+        
+        this.transcriptDiv.addEventListener('wheel', () => {
+            this.userScrolling = true;
+            clearTimeout(this.scrollTimeout);
+            this.scrollTimeout = setTimeout(() => this.userScrolling = false, 3000);
+        });
+    }
+    
+    onPlayerStateChange(event) {
+        if (event.data === YT.PlayerState.PLAYING) {
+            requestAnimationFrame(() => this.trackCurrentLine());
+        }
+        updateGlobalPauseButtonState();
+    }
+
+    trackCurrentLine() {
+        if (!this.player || typeof this.player.getCurrentTime !== 'function') return;
+        const currentTime = this.player.getCurrentTime();
+        let currentId = null;
+        for (let i = 0; i < this.transcriptData.length; i++) {
+            const line = this.transcriptData[i];
+            if (currentTime >= line.time && (i === this.transcriptData.length - 1 || currentTime < this.transcriptData[i + 1].time)) {
+                currentId = line.id;
+                break;
+            }
+        }
+        this.transcriptDiv.querySelectorAll('.line').forEach(el => el.classList.remove('highlight'));
+        if (currentId && currentId.startsWith('en_')) {
+            const activeEl = this.transcriptDiv.querySelector('#' + currentId);
+            if (activeEl) {
+                activeEl.classList.add('highlight');
+                if (!this.userScrolling) {
+                    activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        }
+        if (this.player.getPlayerState() === YT.PlayerState.PLAYING) {
+            requestAnimationFrame(() => this.trackCurrentLine());
+        }
+    }
+
+    parseTranscript(raw) {
+        const lines = raw.trim().split('\n');
+        const parsed = [];
+        let currentTime = null, currentText = [];
+        for (const line of lines) {
+            const match = line.match(/^(\d+):(\d{2})$/);
+            if (match) {
+                if (currentTime !== null && currentText.length)
+                    parsed.push({ time: currentTime, text: currentText.join('<br>') });
+                currentTime = parseInt(match[1]) * 60 + parseInt(match[2]);
+                currentText = [];
+            } else if(line.trim() !== '') {
+                currentText.push(line.trim());
+            }
+        }
+        if (currentTime !== null && currentText.length)
+            parsed.push({ time: currentTime, text: currentText.join('<br>') });
+        return parsed;
+    }
+
+    createLineCard(id, time, fallbackText, className) {
+        const div = document.createElement('div');
+        div.className = `line ${className}`;
+        div.dataset.time = time;
+        div.id = id;
+        div.innerHTML = fallbackText;
+        div.setAttribute('tabindex', '0');
+
+        div.onclick = () => {
+            if (this.player?.seekTo) {
+                this.player.seekTo(time, true);
+            }
+            div.focus();
+        };
+        
+        div.ondblclick = (e) => {
+            e.currentTarget.contentEditable = true;
+            e.currentTarget.focus();
+        };
+
+        if (className === 'user') {
+            const btn = document.createElement('button');
+            btn.className = 'record-btn';
+            btn.textContent = '🎤';
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                this.startSpeechRecognition(div, fallbackText);
+            };
+            div.appendChild(btn);
+        }
+        return div;
+    }
+
+    loadVideoAndTranscript() {
+        const videoId = this.videoIdInput.value.trim();
+        const rawEN = this.scriptEN.value.trim();
+        const rawVI = this.scriptVI.value.trim();
+        
+        if (this.player && typeof this.player.destroy === 'function') {
+            this.player.destroy();
+        }
+
+        const playerDiv = document.createElement('div');
+        const uniquePlayerId = `player_${this.pane.id}`;
+        playerDiv.id = uniquePlayerId;
+        this.playerContainer.innerHTML = '';
+        this.playerContainer.appendChild(playerDiv);
+
+        this.player = new YT.Player(uniquePlayerId, {
+            height: '360',
+            width: '100%',
+            videoId: videoId,
+            events: {
+                'onStateChange': (e) => this.onPlayerStateChange(e)
+            }
+        });
+
+        const en = this.parseTranscript(rawEN);
+        const vi = this.parseTranscript(rawVI);
+        this.transcriptDiv.innerHTML = '';
+        this.transcriptData = [];
+        
+        let i_en = 0, i_vi = 0;
+        
+        while (i_en < en.length || i_vi < vi.length) {
+            const line_en = en[i_en];
+            const line_vi = vi[i_vi];
+
+            if (line_en && (!line_vi || line_en.time <= line_vi.time)) {
+                const text = `[${Math.floor(line_en.time / 60)}:${(line_en.time % 60).toString().padStart(2, '0')}] ${line_en.text}`;
+                const uniqueId = `en_${this.pane.id}_${i_en}`;
+                const div = this.createLineCard(uniqueId, line_en.time, text, 'user');
+                this.transcriptDiv.appendChild(div);
+                this.transcriptData.push({ id: uniqueId, time: line_en.time });
+                i_en++;
+            } else if (line_vi) {
+                 const text = `[VI] ${line_vi.text}`;
+                 const uniqueId = `vi_${this.pane.id}_${i_vi}`;
+                 const div = this.createLineCard(uniqueId, line_vi.time, text, 'machine');
+                 this.transcriptDiv.appendChild(div);
+                 i_vi++;
+            }
+        }
+    }
+
+    saveScripts() {
+        const videoId = this.videoIdInput.value.trim();
+        const lines = this.transcriptDiv.querySelectorAll('.line');
+        const enChunks = [];
+        const viChunks = [];
+    
+        for (const line of lines) {
+            const time = parseInt(line.dataset.time || '0');
+            const minutes = Math.floor(time / 60);
+            const seconds = (time % 60).toString().padStart(2, '0');
+    
+            let content = line.innerHTML
+                .replace(/<button[^>]*>.*?<\/button>/g, '')  
+                .replace(/<div class="result">.*?<\/div>/g, '')  
+                .replace(/<div class="playback-container">.*?<\/div>/g, '') // Thêm dòng này
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/\[\d+:\d+\]/g, '')
+                .replace(/\[VI\]/g, '')
+                .replace(/<[^>]+>/g, '')       
+                .replace(/\n{2,}/g, '\n')      
+                .trim();
+    
+            const block = `${minutes}:${seconds}\n${content}`;
+    
+            if (line.classList.contains('user')) {
+                enChunks.push(block);
+            } else if (line.classList.contains('machine')) {
+                viChunks.push(block);
+            }
+        }
+    
+        const blob = new Blob([JSON.stringify({
+            videoId,
+            enText: enChunks.join('\n\n'),
+            viText: viChunks.join('\n\n')
+        }, null, 2)], { type: 'application/json' });
+    
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `transcript_${videoId || 'video'}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+    
+    loadScriptFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                this.videoIdInput.value = data.videoId || '';
+                this.scriptEN.value = data.enText || '';
+                this.scriptVI.value = data.viText || '';
+            } catch (err) {
+                alert('Invalid JSON file.');
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    startSpeechRecognition(div, expectedText) {
+        // Xóa kết quả và nút nghe lại cũ
+        const existingResult = div.querySelector('.result');
+        if (existingResult) existingResult.remove();
+        const existingPlayback = div.querySelector('.playback-container');
+        if (existingPlayback) existingPlayback.remove();
+
+        if (!('webkitSpeechRecognition' in window) || !navigator.mediaDevices) {
+            alert('Trình duyệt của bạn không hỗ trợ tính năng này.');
+            return;
+        }
+
+        // 1. Xin quyền truy cập micro
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                // ---- Bắt đầu ghi âm ----
+                const mediaRecorder = new MediaRecorder(stream);
+                const audioChunks = [];
+
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                // Khi ghi âm dừng, tạo nút nghe lại
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    const playbackContainer = document.createElement('div');
+                    playbackContainer.className = 'playback-container';
+                    
+                    const listenButton = document.createElement('button');
+                    listenButton.textContent = '▶️ Listen Again';
+                    listenButton.style.marginTop = '5px';
+                    listenButton.onclick = () => new Audio(audioUrl).play();
+                    
+                    playbackContainer.appendChild(listenButton);
+                    div.appendChild(playbackContainer);
+                };
+                
+                mediaRecorder.start();
+
+                // ---- Bắt đầu nhận dạng giọng nói ----
+                const recognition = new webkitSpeechRecognition();
+                recognition.lang = 'th-TH';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                
+                recognition.onend = () => {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop()); // Tắt micro
+                };
+
+                recognition.onresult = (event) => {
+                    const spokenText = event.results[0][0].transcript;
+                    const cleanExpectedText = expectedText.replace(/\[.*?\]/g, '').trim();
+                    const score = this.similarity(spokenText.toLowerCase(), cleanExpectedText.toLowerCase());
+                    const resultEl = document.createElement('div');
+                    resultEl.className = 'result';
+                    resultEl.innerHTML = `You said: "<em>${spokenText}</em>" → Similarity: <b>${Math.round(score * 100)}%</b>`;
+                    div.appendChild(resultEl);
+                };
+
+                recognition.onerror = (event) => {
+                    alert('Error occurred in recognition: ' + event.error);
+                    mediaRecorder.stop();
+                };
+
+                recognition.start();
+            })
+            .catch(err => {
+                alert('Could not access the microphone. Please grant permission.');
+                console.error("Error accessing microphone:", err);
+            });
+    }
+
+    similarity(s1, s2) {
+        const longer = s1.length > s2.length ? s1 : s2;
+        const shorter = s1.length > s2.length ? s2 : s1;
+        const longerLength = longer.length;
+        if (longerLength === 0) return 1.0;
+        return (longerLength - this.editDistance(longer, shorter)) / longerLength;
+    }
+
+    editDistance(s1, s2) {
+        s1 = s1.toLowerCase();
+        s2 = s2.toLowerCase();
+        const costs = [];
+        for (let i = 0; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 0; j <= s2.length; j++) {
+                if (i === 0) {
+                    costs[j] = j;
+                } else if (j > 0) {
+                    let newValue = costs[j - 1];
+                    if (s1.charAt(i - 1) !== s2.charAt(j - 1))
+                        newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                    costs[j - 1] = lastValue;
+                    lastValue = newValue;
+                }
+            }
+            if (i > 0) costs[s2.length] = lastValue;
+        }
+        return costs[s2.length];
+    }
+}
+
+// --- GLOBAL CONTROLS AND STATE ---
+
+let app1, app2;
+let currentPaneApp = null;
+
+function onYouTubeIframeAPIReady() {
+    app1 = new TranscriptApp('pane1');
+    app2 = new TranscriptApp('pane2');
+    setupGlobalControls();
+}
+
+function updateGlobalPauseButtonState() {
+    const globalBtn = document.getElementById('globalTogglePause');
+    if (!globalBtn || !app1 || !app2) return;
+
+    const isPlaying1 = app1.player && app1.player.getPlayerState() === YT.PlayerState.PLAYING;
+    const isPlaying2 = app2.player && app2.player.getPlayerState() === YT.PlayerState.PLAYING;
+
+    if (isPlaying1 || isPlaying2) {
+        globalBtn.textContent = 'Pause All';
+    } else {
+        globalBtn.textContent = 'Play All';
+    }
+}
+
+function setupGlobalControls() {
+    const globalBtn = document.getElementById('globalTogglePause');
+    if (!globalBtn) return;
+
+    globalBtn.onclick = () => {
+        if (!app1 || !app2) return;
+
+        const isPlaying1 = app1.player && app1.player.getPlayerState() === YT.PlayerState.PLAYING;
+        const isPlaying2 = app2.player && app2.player.getPlayerState() === YT.PlayerState.PLAYING;
+
+        if (isPlaying1 || isPlaying2) {
+            if (app1.player?.pauseVideo) app1.player.pauseVideo();
+            if (app2.player?.pauseVideo) app2.player.pauseVideo();
+        } else {
+            if (app1.player?.playVideo) app1.player.playVideo();
+            if (app2.player?.playVideo) app2.player.playVideo();
+        }
+    };
+}
+
+document.addEventListener('focusin', e => {
+    const pane = e.target.closest('.pane');
+    if (pane) {
+        currentPaneApp = pane.id === 'pane1' ? app1 : app2;
+    }
+});
+
+document.addEventListener('mouseup', e => {
+    const sel = window.getSelection();
+    if (sel.toString().length > 0 && e.target.closest('.pane')) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        const toolbar = document.getElementById('toolbar');
+        toolbar.style.top = `${window.scrollY + rect.top - 40}px`; 
+        toolbar.style.left = `${window.scrollX + rect.left}px`; 
+        toolbar.style.display = 'block';
+    } else {
+        document.getElementById('toolbar').style.display = 'none';
+    }
+});
+
+function execCmd(cmd, value = null) {
+    document.execCommand(cmd, false, value);
+    document.getElementById('toolbar').style.display = 'none';
+    if(currentPaneApp) {
+      currentPaneApp.transcriptDiv.querySelectorAll('[contenteditable=true]').forEach(el => el.contentEditable = false);
+    }
+}
+
+document.addEventListener('keydown', (event) => {
+    if (event.code !== 'Space' || event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+        return;
+    }
+
+    const activeElement = document.activeElement;
+
+    if (activeElement && activeElement.classList.contains('line')) {
+        event.preventDefault();
+
+        const time = parseFloat(activeElement.dataset.time);
+        if (isNaN(time)) return;
+
+        const parentPane = activeElement.closest('.pane');
+        if (!parentPane) return;
+
+        const targetApp = (parentPane.id === 'pane1') ? app1 : app2;
+
+        if (targetApp && targetApp.player && typeof targetApp.player.seekTo === 'function') {
+            targetApp.player.seekTo(time, true);
+        }
+    }
+});
+</script>
+</body>
+</html>
