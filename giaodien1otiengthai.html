@@ -349,48 +349,51 @@ document.addEventListener('dblclick', e => {
   }
 
 function saveScripts() {
-  const videoId = document.getElementById('videoIdInput').value.trim();
-  const lines = document.querySelectorAll('.line');
-  const enChunks = [];
-  const viChunks = [];
+    const videoId = document.getElementById('videoIdInput').value.trim();
+    const lines = document.querySelectorAll('.line');
+    const enChunks = []; // Sửa: đổi deChunks thành enChunks
+    const viChunks = [];
 
-  for (const line of lines) {
-    const time = parseInt(line.dataset.time || '0');
-    const minutes = Math.floor(time / 60);
-    const seconds = (time % 60).toString().padStart(2, '0');
+    for (const line of lines) {
+        const time = parseInt(line.dataset.time || '0');
+        const minutes = Math.floor(time / 60);
+        const seconds = (time % 60).toString().padStart(2, '0');
 
-    let content = line.innerHTML
-      .replace(/<button[^>]*>.*?<\/button>/g, '')  
-      .replace(/<div class="result">.*?<\/div>/g, '')  
-      .replace(/<div class="playback-container">.*?<\/div>/g, '') // Thêm dòng này
-      .replace(/<br\s*\/?>/gi, '\n')  
-      .replace(/<[^>]+>/g, '')        
-      .replace(/\n{2,}/g, '\n')       
-      .trim();
+        let content = line.innerHTML
+            .replace(/<button[^>]*>.*?<\/button>/g, '')
+            .replace(/<div class="result">.*?<\/div>/g, '')
+            .replace(/<div class="playback-container">.*?<\/div>/g, '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/\n{2,}/g, '\n')
+            .trim();
 
-    const block = `${minutes}:${seconds}\n${content}`;
+        let block;
 
-    if (line.classList.contains('user')) {
-      enChunks.push(block);
-    } else if (line.classList.contains('machine')) {
-      viChunks.push(block);
+        if (line.classList.contains('user')) { // Đây là dòng tiếng Anh
+            const cleanContent = content.replace(/^\[\d+:\d{2}\]\s*/, '');
+            block = `${minutes}:${seconds}\n${cleanContent}`;
+            enChunks.push(block); // Sửa: thêm vào enChunks
+        } else if (line.classList.contains('machine')) { // Đây là dòng tiếng Việt
+            const cleanContent = content.replace(/^\[VI\]\s*/, '');
+            block = `${minutes}:${seconds}\n${cleanContent}`;
+            viChunks.push(block);
+        }
     }
-  }
 
-  const blob = new Blob([JSON.stringify({
-    videoId,
-    enText: enChunks.join('\n\n'),
-    viText: viChunks.join('\n\n')
-  }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({
+        videoId,
+        enText: enChunks.join('\n\n'), // Sửa: sử dụng enChunks
+        viText: viChunks.join('\n\n')
+    }, null, 2)], { type: 'application/json' });
 
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `transcript_${videoId || 'video'}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transcript_${videoId || 'video'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
-
 
 function loadScriptFile(event) {
   const file = event.target.files[0];
@@ -412,3 +415,4 @@ function loadScriptFile(event) {
 </script>
 </body>
 </html>
+
