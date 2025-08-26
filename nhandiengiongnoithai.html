@@ -2,13 +2,13 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8"/>
-    <title>Luyện Nói & Đọc Tiếng Thái</title>
+    <title>Combined Chinese Q&A Recorder & Text Reader</title>
     <style>
         /* --- General Layout --- */
         html, body {
             height: 100%;
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: Arial, sans-serif;
             background-color: #f4f4f4;
             overflow: hidden;
         }
@@ -45,7 +45,6 @@
             border-radius: 5px;
             border: 1px solid #ccc;
             background-color: #e9ecef;
-            font-family: inherit;
         }
         button:hover {
             background-color: #d8dde2;
@@ -77,6 +76,7 @@
             min-height: 30px;
             border: 1px solid #ddd;
             line-height: 1.6;
+            font-size: 1.1em; /* Tăng cỡ chữ để dễ đọc Hán tự */
         }
         .audio-status {
             display: inline-block;
@@ -98,7 +98,6 @@
             box-sizing: border-box;
             border-radius: 5px;
             border: 1px solid #ccc;
-            font-family: inherit;
         }
         .model-answer {
              background-color: #e6ffed;
@@ -137,9 +136,9 @@
             font-weight: bold;
             color: #333;
         }
-        /* CSS for highlight */
+        /* CSS cho highlight */
         .reading-highlight {
-            background-color: rgb(173, 216, 230); /* Light blue color */
+            background-color: rgb(173, 216, 230); /* Màu xanh nhạt */
         }
     </style>
 </head>
@@ -147,22 +146,23 @@
 
 <div id="main-container">
     <div id="left-panel" class="panel">
-        <h1>Hỏi và Đáp - Ghi âm (Tiếng Thái)</h1>
-        <h2>📂 Nhập câu hỏi từ tệp:</h2>
+        <h1>Questions and Answers – Voice Recording (Chinese)</h1>
+        <h2>📂 Import questions from file:</h2>
         <input accept=".docx,.txt" id="file-input" type="file"/>
-        <h2>📥 Nhập Hỏi & Đáp từ ZIP:</h2>
+        <h2>📥 Import Q&A from ZIP:</h2>
         <input type="file" id="zip-input" accept=".zip">
         <div id="questions-container">
             </div>
-        <button onclick="addNewQuestion()">➕ Thêm câu hỏi mới</button>
-        <button onclick="exportData()">📤 Xuất dữ liệu ra ZIP</button>
-        <button onclick="createNewSession()">➕ Tạo phiên mới</button>
+        <button onclick="addNewQuestion()">➕ Add New Question</button>
+        <button onclick="exportData()">📤 Export Data to ZIP</button>
+        <button id="toggle-model-answers-btn" onclick="toggleModelAnswers()">Ẩn câu trả lời mẫu</button>
+        <button onclick="createNewSession()">➕ Create New Session</button>
     </div>
 
     <div id="right-panel" class="panel">
-        <h1>Dán văn bản Tiếng Thái vào đây để nghe đọc</h1>
+        <h1>Paste Chinese text here to listen with Xiaoxiao's voice</h1>
         <div id="text-area" contenteditable="true">
-            Dán văn bản vào đây...
+            Paste text here...
         </div>
         <div id="controls-right">
              <div id="tts-controls">
@@ -170,10 +170,10 @@
                 <input type="range" id="speed-slider" min="0.5" max="2" value="1" step="0.1">
                 <span id="speed-value">1.0x</span>
             </div>
-            <button id="read-all">🔊 Đọc toàn bộ</button>
-            <button id="read-current-sentence">🔊 Đọc câu hiện tại</button>
-            <button id="highlight-button">🎨 Tô màu</button>
-            <button id="remove-highlight-button">🗑️ Xóa tô màu</button>
+            <button id="read-all">🔊 Read All Text</button>
+            <button id="read-current-sentence">🔊 Read Current Sentence</button>
+            <button id="highlight-button">🎨 Highlight</button>
+            <button id="remove-highlight-button">🗑️ Xóa Highlight</button>
         </div>
     </div>
 </div>
@@ -184,8 +184,7 @@
     // =================================================================
     // =========== SHARED & GLOBAL VARIABLES AND FUNCTIONS ===========
     // =================================================================
-    // FIXED: Changed variable name and logic for Thai
-    let thaiTTSVoice = null;
+    let ttsVoice = null;
     let recognition;
     let mediaRecorder;
     let audioChunks = [];
@@ -201,31 +200,32 @@
 
     const highlightColors = ["#ffff99", "#99ccff", "#ffcc99", "#ffcccb", "#ffb6c1", "#98fb98", "#dda0dd", "#c19a6b"];
     let currentColorIndex = 0;
+    
+    let areModelAnswersVisible = true;
 
-    // FIXED: Changed function to look for Thai voices
+
     function initializeVoices() {
         const voices = speechSynthesis.getVoices();
-        thaiTTSVoice = voices.find(v => v.name === "Microsoft Premwadee Online (Natural) - Thai (Thailand)") || voices.find(v => v.lang === 'th-TH');
-
-        if (thaiTTSVoice) {
-            console.log("Đã tìm thấy giọng đọc Tiếng Thái:", thaiTTSVoice.name);
+        // MODIFIED: Search for Chinese voice (Xiaoxiao)
+        ttsVoice = voices.find(v => v.name === "Microsoft Premwadee Online (Natural) - Thai (Thailand)") || voices.find(v => v.lang.startsWith("th-TH"));
+        if (ttsVoice) {
+            console.log("Successfully found Chinese voice:", ttsVoice.name);
         } else {
-            console.warn("Không tìm thấy giọng đọc Tiếng Thái. Sẽ sử dụng giọng mặc định của trình duyệt.");
+            console.warn("Xiaoxiao voice not found. The browser's default Chinese voice will be used.");
         }
     }
-
 
     // =================================================================
     // ================ Q&A RECORDER (LEFT PANEL) LOGIC ================
     // =================================================================
     if (!('webkitSpeechRecognition' in window)) {
-        alert('Trình duyệt này không hỗ trợ nhận dạng giọng nói.');
+        alert('Speech recognition not supported in this browser.');
     } else {
         recognition = new webkitSpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = false;
-        // FIXED: Ensured language is Thai
-        recognition.lang = 'th-TH';
+        // MODIFIED: Change language to Chinese
+        recognition.lang = 'th-TH'; 
         recognition.onresult = function (event) {
             let transcript = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -235,11 +235,12 @@
             }
             if (currentAnswerIndex !== null && transcript) {
                 const answerBox = document.getElementById(`answer-${currentAnswerIndex}`);
-                answerBox.innerHTML += transcript;
+                // Nối trực tiếp không cần dấu chấm
+                answerBox.innerHTML = answerBox.textContent + transcript; 
             }
         };
         recognition.onerror = function (event) {
-            console.error('Lỗi nhận dạng giọng nói:', event.error);
+            console.error('Speech recognition error:', event.error);
         };
     }
 
@@ -272,8 +273,8 @@
             };
             mediaRecorder.start();
         } catch (err) {
-            console.error("Lỗi khi bắt đầu ghi âm:", err);
-            alert("Không thể bắt đầu ghi âm. Vui lòng cấp quyền micro.");
+            console.error("Error starting audio recording:", err);
+            alert("Could not start audio recording. Please grant microphone permissions.");
         }
     }
 
@@ -288,7 +289,7 @@
         if(audio.src) {
            audio.play();
         } else {
-            alert("Chưa có âm thanh nào được ghi cho câu hỏi này.");
+            alert("No audio recorded for this question yet.");
         }
     }
 
@@ -298,6 +299,9 @@
         }
         removeHighlight();
         const cleanedText = text.replace(/[\u2500-\u25FF\u2B00-\u2BFF]/g, '')
+                                .replace(/Kiểm tra/g, '')
+                                .replace(/Gõ lại câu này/g, '')
+                                .replace(/Xóa\/Làm lại/g, '')
                                 .replace(/\s+/g, ' ')
                                 .trim();
         if (!cleanedText) {
@@ -305,9 +309,9 @@
             return;
         }
         currentUtterance = new SpeechSynthesisUtterance(cleanedText);
-        // FIXED: Set language and voice for Thai
-        currentUtterance.lang = 'th-TH'; 
-        if (thaiTTSVoice) currentUtterance.voice = thaiTTSVoice;
+        // MODIFIED: Set language to Chinese
+        currentUtterance.lang = 'zh-CN'; 
+        if (ttsVoice) currentUtterance.voice = ttsVoice;
         currentUtterance.rate = currentPlaybackRate;
         currentUtterance.onboundary = function(event) {
             if (event.name === 'word') {
@@ -339,14 +343,14 @@
         questionDiv.setAttribute('data-index', index);
         questionDiv.innerHTML = `
             <div class="question-text" contenteditable="true">${index + 1}. </div>
-            <button onclick="speakQuestion(${index})">🔈 Đọc</button>
-            <button onclick="startRecognition(${index})">🎤 Bắt đầu Ghi âm</button>
-            <button onclick="stopRecognition()">🛑 Dừng</button>
-            <button onclick="playAudio(${index})">▶️ Nghe lại</button>
+            <button onclick="speakQuestion(${index})">🔈 Read</button>
+            <button onclick="startRecognition(${index})">🎤 Start Recording</button>
+            <button onclick="stopRecognition()">🛑 Stop</button>
+            <button onclick="playAudio(${index})">▶️ Play</button>
             <span class="audio-status" id="audio-status-${index}">🔊</span>
             <div class="answer" id="answer-${index}"></div>
-            <textarea placeholder="✍️ Nhập câu trả lời của bạn ở đây..." style="width: 100%;"></textarea>
-            <textarea class="model-answer" placeholder="✍️ Nhập câu trả lời mẫu ở đây..."></textarea>
+            <textarea placeholder="✍️ ..." style="width: 100%;"></textarea>
+            <textarea class="model-answer" placeholder="✍️ ..."></textarea>
             <button onclick="scoreAnswer(${index})">⭐ Chấm điểm</button>
             <span class="score-display" id="score-display-${index}"></span>
             <audio id="audio-${index}" controls style="display: none;"></audio>
@@ -363,29 +367,64 @@
     function createNewSession() {
         window.open(window.location.pathname + `?id=${Date.now()}_${Math.floor(Math.random() * 100000)}`, '_blank');
     }
+    
+    function toggleModelAnswers() {
+        const modelAnswers = document.querySelectorAll('.model-answer');
+        const button = document.getElementById('toggle-model-answers-btn');
+        areModelAnswersVisible = !areModelAnswersVisible; 
+        
+        modelAnswers.forEach(answer => {
+            answer.style.display = areModelAnswersVisible ? 'block' : 'none';
+        });
+
+        button.textContent = areModelAnswersVisible ? 'Ẩn câu trả lời mẫu' : 'Hiện câu trả lời mẫu';
+    }
+    
+    function processImportedQuestionsAndAnswers(text) {
+        document.getElementById("questions-container").innerHTML = '';
+        questionCount = 0;
+        
+        const lines = text.split(/\r?\n/);
+        const qaPairs = [];
+        
+        lines.forEach(line => {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) return;
+
+            if (trimmedLine.startsWith('[A]')) {
+                if (qaPairs.length > 0) {
+                    qaPairs[qaPairs.length - 1].answer = trimmedLine.substring(3).trim();
+                }
+            } else {
+                qaPairs.push({ question: trimmedLine, answer: '' });
+            }
+        });
+        
+        qaPairs.forEach(pair => {
+            if (!pair.question) return;
+            addNewQuestion();
+            const newBlock = document.querySelector(`.question-block[data-index="${questionCount - 1}"]`);
+            newBlock.querySelector(".question-text").textContent = pair.question;
+            if (pair.answer) {
+                 newBlock.querySelector(".model-answer").value = pair.answer;
+            }
+        });
+    }
+
 
     document.getElementById("file-input").addEventListener("change", function (event) {
         const file = event.target.files[0];
         if (!file) return;
-        const processQuestions = (questions) => {
-            document.getElementById("questions-container").innerHTML = '';
-            questionCount = 0;
-            questions.forEach(qText => {
-                if (!qText.trim()) return;
-                addNewQuestion();
-                const newBlock = document.querySelector(`.question-block[data-index="${questionCount-1}"]`);
-                newBlock.querySelector(".question-text").textContent = qText.trim();
-            });
-        };
+
         if (file.name.endsWith(".txt")) {
             const reader = new FileReader();
-            reader.onload = () => processQuestions(reader.result.split(/\r?\n/).filter(Boolean));
+            reader.onload = () => processImportedQuestionsAndAnswers(reader.result);
             reader.readAsText(file);
         } else if (file.name.endsWith(".docx")) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 mammoth.extractRawText({ arrayBuffer: e.target.result })
-                    .then(result => processQuestions(result.value.split("\n").filter(Boolean)));
+                    .then(result => processImportedQuestionsAndAnswers(result.value));
             };
             reader.readAsArrayBuffer(file);
         }
@@ -413,7 +452,7 @@
         });
         zip.file("qa_export.txt", qaContent);
         const rightPanelHtml = document.getElementById('text-area').innerHTML;
-        if (rightPanelHtml && rightPanelHtml !== 'Dán văn bản vào đây...') {
+        if (rightPanelHtml && rightPanelHtml !== 'Paste text here...') {
             zip.file("reading_text.html", rightPanelHtml);
         }
         zip.generateAsync({ type: "blob" }).then(blob => {
@@ -485,7 +524,7 @@
     });
 
     // =================================================================
-    // ================= SCORING LOGIC (CHARACTER-BASED) ==============
+    // ================= SCORING LOGIC (MODIFIED FOR CHINESE) ==========
     // =================================================================
 
     function levenshteinDistance(s1, s2) {
@@ -564,21 +603,24 @@
         if (!userAnswer) { alert("Vui lòng ghi âm hoặc nhập câu trả lời trước khi chấm điểm."); return; }
         const distance = levenshteinDistance(modelAnswer, userAnswer);
         const longerLength = Math.max(modelAnswer.length, userAnswer.length);
-        if (longerLength === 0) { scoreDisplay.textContent = "Điểm: 100%"; }
+        if (longerLength === 0) { scoreDisplay.textContent = "Score: 100%"; }
         else {
              const similarity = (1 - (distance / longerLength)) * 100;
-             scoreDisplay.textContent = `Điểm: ${Math.round(similarity)}%`;
+             scoreDisplay.textContent = `Score: ${Math.round(similarity)}%`;
         }
         
-        const userChars = userAnswer.split('');
-        const modelChars = modelAnswer.split('');
-        const dp = computeLCS(userChars, modelChars);
-        const diff = generateDiff(userChars, modelChars, dp);
+        // MODIFIED: Split strings into characters for Chinese
+        const userWords = [...userAnswer.replace(/\s/g, '')];
+        const modelWords = [...modelAnswer.replace(/\s/g, '')];
+
+        const dp = computeLCS(userWords, modelWords);
+        const diff = generateDiff(userWords, modelWords, dp);
         const highlightedHtml = diff.map(part => {
             const color = part.type === 'correct' ? 'green' : 'red';
             const escapedText = part.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             return `<span style="color: ${color};">${escapedText}</span>`;
-        }).join('');
+        // MODIFIED: Join characters without a space
+        }).join(''); 
         userAnswerDiv.innerHTML = highlightedHtml || '';
     }
 
@@ -615,21 +657,30 @@
     function removeHighlight() {
         const textArea = document.getElementById('text-area');
         const highlightedSpans = textArea.querySelectorAll('.reading-highlight');
+        
         highlightedSpans.forEach(span => {
             span.parentNode.replaceChild(document.createTextNode(span.textContent), span);
         });
+
         textArea.normalize();
     }
 
 
     function applyHighlight(wordText, charIndexInCleanedText) {
         removeHighlight();
+
         const textArea = document.getElementById('text-area');
+        const fullCleanedText = getTextContentOfTextArea(textArea);
+
         const startIndex = charIndexInCleanedText;
         const endIndex = charIndexInCleanedText + wordText.length;
+
         const range = document.createRange();
         let currentOffset = 0;
-        let startNode = null, endNode = null, startNodeOffset = 0, endNodeOffset = 0;
+        let startNode = null;
+        let endNode = null;
+        let startNodeOffset = 0;
+        let endNodeOffset = 0;
 
         const walker = document.createTreeWalker(textArea, NodeFilter.SHOW_TEXT, textNodeFilter, false);
         let node;
@@ -655,7 +706,7 @@
                 span.className = 'reading-highlight';
                 range.surroundContents(span);
             } catch (e) {
-                console.error("Lỗi khi tô màu:", e);
+                console.error("Error surrounding contents for highlight:", e);
                 removeHighlight();
             }
         }
@@ -664,57 +715,75 @@
     document.getElementById("text-area").addEventListener("mouseup", function () {
         setTimeout(() => {
             const selection = window.getSelection();
-            if (selection.isCollapsed) return;
+            if (selection.isCollapsed) {
+                return;
+            }
+
             let selectedText = selection.toString().trim();
-            if (selectedText) speak(selectedText);
+            if (selectedText) {
+                selectedText = selectedText.replace(/Kiểm tra/g, '').replace(/Gõ lại câu này/g, '').replace(/Xóa\/Làm lại/g, '').trim();
+                speak(selectedText);
+            }
         }, 100);
     });
 
     document.getElementById("read-all").addEventListener("click", function () {
         const textArea = document.getElementById("text-area");
         let fullTextToSpeak = getTextContentOfTextArea(textArea);
-        if (fullTextToSpeak && fullTextToSpeak.trim() !== 'Dán văn bản vào đây...') {
+        if (fullTextToSpeak && fullTextToSpeak.trim() !== 'Paste text here...') {
             speak(fullTextToSpeak);
         } else {
-            alert("Không có văn bản để đọc!");
+            alert("There is no text to read!");
         }
     });
 
     document.getElementById("read-current-sentence").addEventListener("click", function() {
         const textArea = document.getElementById('text-area');
         const selection = window.getSelection();
+
         if (selection.rangeCount === 0) {
-            alert("Vui lòng đặt con trỏ vào vị trí muốn đọc hoặc chọn một đoạn văn bản.");
+            alert("Vui lòng đặt con trỏ chuột vào vị trí muốn đọc hoặc chọn một đoạn văn bản.");
             return;
         }
+
         const range = selection.getRangeAt(0);
+
         const preCursorRange = document.createRange();
         preCursorRange.selectNodeContents(textArea);
         preCursorRange.setEnd(range.startContainer, range.startOffset);
+
         const tempDiv = document.createElement('div');
         tempDiv.appendChild(preCursorRange.cloneContents());
+
         const offsetInFilteredText = getTextContentOfTextArea(tempDiv).length;
         const fullTextNodes = getTextContentOfTextArea(textArea);
 
         let sentenceStart = offsetInFilteredText;
         while (sentenceStart > 0) {
             const char = fullTextNodes[sentenceStart - 1];
-            if ('.?!'.includes(char) || char === '\n') break; 
+            // Thêm dấu câu tiếng Trung
+            if (char === '.' || char === '?' || char === '!' || char === '\n' || char === '。' || char === '？' || char === '！') {
+                break;
+            }
             sentenceStart--;
         }
-        while (sentenceStart < fullTextNodes.length && ' \n.?!'.includes(fullTextNodes[sentenceStart])) {
+        while (sentenceStart < fullTextNodes.length && (fullTextNodes[sentenceStart] === ' ' || fullTextNodes[sentenceStart] === '\n' || fullTextNodes[sentenceStart].match(/[.,?!。？！]/))) {
             sentenceStart++;
         }
+
         let sentenceEnd = offsetInFilteredText;
         while (sentenceEnd < fullTextNodes.length) {
             const char = fullTextNodes[sentenceEnd];
-            if ('.?!'.includes(char) || char === '\n') {
+             // Thêm dấu câu tiếng Trung
+            if (char === '.' || char === '?' || char === '!' || char === '\n' || char === '。' || char === '？' || char === '！') {
                 sentenceEnd++;
                 break;
             }
             sentenceEnd++;
         }
+
         let sentenceToRead = fullTextNodes.substring(sentenceStart, sentenceEnd).trim();
+
         if (sentenceToRead) {
             speak(sentenceToRead, sentenceStart);
         } else {
