@@ -317,6 +317,7 @@ class TranscriptApp {
                 this.videoIdInput.value = data.videoId || '';
                 this.scriptEN.value = data.enText || '';
                 this.scriptVI.value = data.viText || '';
+                this.loadVideoAndTranscript(); // auto render transcript after loading file
             } catch (err) {
                 alert('Invalid JSON file.');
             }
